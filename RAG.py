@@ -46,13 +46,7 @@ embeddings = openai_embeddings()
 vector_store = InMemoryVectorStore(embeddings)
 # Index chunks
 _ = vector_store.add_documents(documents=all_splits)
-
-# Define prompt for question-answering
-# N.B. for non-US LangSmith endpoints, you may need to specify
-# api_url="https://api.smith.langchain.com" in hub.pull.
-prompt = hub.pull("rlm/rag-prompt")
 llm = openai_model()
-
 
 @tool(response_format="content_and_artifact")
 def retrieve(query: str):
@@ -121,7 +115,7 @@ graph_builder = StateGraph(MessagesState)
 graph_builder.add_node(query_or_respond)
 graph_builder.add_node(tools)
 graph_builder.add_node(generate)
-
+# start node
 graph_builder.set_entry_point("query_or_respond")
 graph_builder.add_conditional_edges(
     "query_or_respond",
@@ -138,7 +132,9 @@ config = {"configurable": {"thread_id": "abc123"}}
 
 input_messages = [
     "AI 和程序员的关系是怎样的?",
-    "这两个有什么共同特点和区别?"
+    "这两个有什么共同特点和区别?",
+    "你认为AI导致大量的失业潮?",
+    "为什么很多人讨论AI取代程序员,而不是其他行业?"
 ]
 for im in input_messages:
     for step in graph.stream(
