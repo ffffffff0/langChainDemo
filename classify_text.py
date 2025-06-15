@@ -1,4 +1,4 @@
-from init_tool import openai_model
+from init_tools import openai_model
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field

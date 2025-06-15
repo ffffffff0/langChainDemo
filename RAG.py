@@ -1,5 +1,5 @@
 import bs4
-from init_tool import openai_model, openai_embeddings
+from init_tools import openai_model, openai_embeddings
 from langchain import hub
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter

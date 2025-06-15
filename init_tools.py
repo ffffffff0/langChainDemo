@@ -21,3 +21,7 @@ def openai_model(model='gpt-4.1') -> ChatOpenAI:
 def openai_embeddings(model='text-embedding-3-large') -> OpenAIEmbeddings:
     embeddings = OpenAIEmbeddings(base_url= base_url, api_key=api_key, model=model)
     return embeddings
+
+
+def qwen_model() -> ChatOpenAI:
+    pass
