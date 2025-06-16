@@ -142,7 +142,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='RAG Evaluator')
     parser.add_argument('--data_dir', type=str, default='../example_data', help='Directory containing documents for evaluation')
     parser.add_argument('--num_eval_questions', type=int, default=5, help='Number of evaluation questions to generate')
-    parser.add_argument('--chunk_sizes', type=int, nargs='+', default=[256, 512], 
+    parser.add_argument('--chunk_sizes', type=int, nargs='+', default=[128, 256, 512], 
                         help='Chunk sizes to evaluate')
 
     return parser.parse_args()

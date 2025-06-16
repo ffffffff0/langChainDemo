@@ -6,6 +6,7 @@ from langchain_openai import OpenAIEmbeddings
 
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.openai import OpenAIEmbedding
+from openai import OpenAI as OpenAIClient
 
 # load env var
 load_dotenv()
@@ -34,6 +35,10 @@ def openai_model(model='gpt-4.1') -> ChatOpenAI:
 def openai_embeddings(model='text-embedding-3-large') -> OpenAIEmbeddings:
     embeddings = OpenAIEmbeddings(base_url=base_url, api_key=api_key, model=model)
     return embeddings
+
+def openai() -> OpenAIClient:
+    client = OpenAIClient(api_key=api_key, base_url=base_url)
+    return client
 
 
 def qwen_model() -> ChatOpenAI:
