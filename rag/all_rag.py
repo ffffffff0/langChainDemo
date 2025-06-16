@@ -8,6 +8,13 @@ import pymupdf
 import numpy as np
 from tqdm import tqdm
 import json
+
+# Evaluating the AI Response
+# Define evaluation scoring system constants
+SCORE_FULL = 1.0     # Complete match or fully satisfactory
+SCORE_PARTIAL = 0.5  # Partial match or somewhat satisfactory
+SCORE_NONE = 0.0     # No match or unsatisfactory
+
 class RAG:
     def __init__(self, pdf_path, question_path):
         self.pdf_path = pdf_path
@@ -107,7 +114,7 @@ class RAG:
         response = self.client.embeddings.create(input=texts, model=model)
         return [np.array(embedding.embedding) for embedding in response.data]
 
-    def create_embeddings_v2(self, text, model="text-embedding-3-large"):
+    def create_embeddings_context_enriched(self, text, model="text-embedding-3-large"):
         response = self.client.embeddings.create(
             model=model,
             input=text
@@ -121,7 +128,7 @@ class RAG:
         return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
 
     def context_enriched_search(self, query, text_chunks, embeddings, k=1, context_size=1):
-        query_embedding = self.create_embeddings_v2(query).data[0].embedding
+        query_embedding = self.create_embeddings_context_enriched(query).data[0].embedding
         similarity_scores = []
         # Compute similarity scores between query and each text chunk embedding
         for i, chunk_embedding in enumerate(embeddings):
@@ -167,6 +174,17 @@ class RAG:
 
         # Return the content of the AI response
         return response.choices[0].message.content
+    
+    def generate_response_context_enriched(self, system_prompt, user_message, model="gpt-4o"):
+        response = self.client.chat.completions.create(
+            model=model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        return response
     
 
     # Define strict evaluation prompt templates
@@ -226,10 +244,7 @@ class RAG:
     
     def chunk_run(self):
         # Extract text from the PDF file
-        extracted_text = self.extract_text_from_pdf(pdf_path)
-        # Print the first 500 characters of the extracted text
-        print(extracted_text[:500])
-
+        extracted_text = self.extract_text_from_pdf()
         # Define different chunk sizes to evaluate
         chunk_sizes = [128, 256, 512]
         # Create a dictionary to store text chunks for each chunk size
@@ -248,14 +263,8 @@ class RAG:
         query = self.data[0]['question']
         retrieved_chunks_dict = {size: self.retrieve_relevant_chunks(query, text_chunks_dict[size], 
                                                                      chunk_embeddings_dict[size]) for size in chunk_sizes}
-        # Print retrieved chunks for chunk size 256
-        print(retrieved_chunks_dict[256])
-
-        # Evaluating the AI Response
-        # Define evaluation scoring system constants
-        SCORE_FULL = 1.0     # Complete match or fully satisfactory
-        SCORE_PARTIAL = 0.5  # Partial match or somewhat satisfactory
-        SCORE_NONE = 0.0     # No match or unsatisfactory
+        # Generate AI responses for each chunk size
+        ai_responses_dict = {size: self.generate_response(query, self.system_prompt, retrieved_chunks_dict[size]) for size in chunk_sizes}
         # True answer for the first validation data
         true_answer = self.data[0]['answer']
         # Evaluate response for chunk size 256 and 128
@@ -269,57 +278,67 @@ class RAG:
 
         print(f"Faithfulness Score (Chunk Size 128): {faithfulness2}")
         print(f"Relevancy Score (Chunk Size 128): {relevancy2}")
+    
+    def context_enriched_run(self):
+        # Extract text from the PDF file
+        extracted_text = self.extract_text_from_pdf()
+        # Chunk the extracted text into segments of 1000 characters with an overlap of 200 characters
+        text_chunks = self.chunk_text(extracted_text, 1000, 200)
+        # Print the number of text chunks created
+        print("Number of text chunks:", len(text_chunks))
+        # Print the first text chunk
+        print("\nFirst text chunk:")
+        print(text_chunks[0])
 
+        query = self.data[0]['question']
+        # Create embeddings for the text chunks
+        response = self.create_embeddings_context_enriched(text_chunks)
 
+        # Retrieve the most relevant chunk and its neighboring chunks for context
+        # Parameters:
+        # - query: The question we're searching for
+        # - text_chunks: Our text chunks extracted from the PDF
+        # - response.data: The embeddings of our text chunks
+        # - k=1: Return the top match
+        # - context_size=1: Include 1 chunk before and after the top match for context
+        top_chunks = self.context_enriched_search(query, text_chunks, response.data, k=1, context_size=1)
+        # Print the query for reference
+        print("\n Query:", query)
+        # Print each retrieved chunk with a heading and separator
+        for i, chunk in enumerate(top_chunks):
+            print(f"\nContext {i + 1}:\n{chunk}\n=====================================")
+        
+        # Create the user prompt based on the top chunks
+        user_prompt = "\n".join([f"Context {i + 1}:\n{chunk}\n=====================================\n" for i, chunk in enumerate(top_chunks)])
+        user_prompt = f"{user_prompt}\nQuestion: {query}"
 
-# Define the path to the PDF file
-pdf_path = "../example_data/Understanding_Climate_Change.pdf"
+        # Generate AI response
+        ai_response = self.generate_response_context_enriched(self.system_prompt, user_prompt)
+        # Define the system prompt for the evaluation system
+        evaluate_system_prompt = """You are an intelligent evaluation system tasked with assessing the AI assistant's responses. 
+        If the AI assistant's response is very close to the true response, 
+        assign a score of 1. 
+        If the response is incorrect or unsatisfactory in relation to the true response, 
+        assign a score of 0. If the response is partially aligned with the true response, assign a score of 0.5."""
 
-# Chunk the extracted text into segments of 1000 characters with an overlap of 200 characters
-text_chunks = chunk_text(extracted_text, 1000, 200)
-# Print the number of text chunks created
-print("Number of text chunks:", len(text_chunks))
-# Print the first text chunk
-print("\nFirst text chunk:")
-print(text_chunks[0])
+        # Create the evaluation prompt by combining the user query, AI response, true response, and evaluation system prompt
+        evaluation_prompt = f"User Query: {query}\nAI Response:\n{ai_response.choices[0].message.content}\nTrue Response: {self.data[0]['answer']}\n{evaluate_system_prompt}"
+        # Generate the evaluation response using the evaluation system prompt and evaluation prompt
+        evaluation_response = self.generate_response_context_enriched(evaluate_system_prompt, evaluation_prompt)
 
-
-# Create embeddings for the text chunks
-response = create_embeddings_v2(text_chunks)
-
-
-# Extract the first query from the validation data
-query = data[3]['question']
-# Retrieve relevant chunks for each chunk size
-retrieved_chunks_dict = {size: retrieve_relevant_chunks(query, text_chunks_dict[size], chunk_embeddings_dict[size]) for size in chunk_sizes}
-# Print retrieved chunks for chunk size 256
-print(retrieved_chunks_dict[256])
-# Extract the first question from the dataset to use as our query
-query = data[0]['question']
-
-# Retrieve the most relevant chunk and its neighboring chunks for context
-# Parameters:
-# - query: The question we're searching for
-# - text_chunks: Our text chunks extracted from the PDF
-# - response.data: The embeddings of our text chunks
-# - k=1: Return the top match
-# - context_size=1: Include 1 chunk before and after the top match for context
-top_chunks = context_enriched_search(query, text_chunks, response.data, k=1, context_size=1)
-# Print the query for reference
-print("Query:", query)
-# Print each retrieved chunk with a heading and separator
-for i, chunk in enumerate(top_chunks):
-    print(f"Context {i + 1}:\n{chunk}\n=====================================")
-
-
-# Generate AI responses for each chunk size
-ai_responses_dict = {size: generate_response(query, system_prompt, retrieved_chunks_dict[size]) for size in chunk_sizes}
-# Print the response for chunk size 256
-print(ai_responses_dict[256])
-
+        # Print the evaluation response
+        print(f'\ncontext enriched run response: {evaluation_response}\n')
+    
 
 if __name__ == "__main__":
-    
-    evaluator = RAG()
-    
+    # Define the path to the PDF file
+    pdf_path = "../example_data/Understanding_Climate_Change.pdf"
+    question_path = "../example_data/q_a.json"
+    evaluator = RAG(
+         pdf_path=pdf_path,
+         question_path=question_path
+    )
+
     evaluator.chunk_run()
+    print(f'\n\n ----------------------------------- NEXT -------------------------------------- \n\n')
+    evaluator.context_enriched_run()
