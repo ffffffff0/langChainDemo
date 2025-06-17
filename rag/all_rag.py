@@ -83,7 +83,6 @@ class RAG:
     def generate_chunk_header(self, chunk, model="gpt-4o"):
         # Define the system prompt to guide the AI's behavior
         system_prompt = "Generate a concise and informative title for the given text."
-        
         # Generate a response from the AI model based on the system prompt and text chunk
         response = self.client.chat.completions.create(
             model=model,
@@ -120,7 +119,15 @@ class RAG:
             input=text
         )
         return response  # Return the response containing the embeddings
-    
+
+    def contextual_chunk_header_create_embeddings(self, text, model="text-embedding-3-large"):
+        # Create embeddings using the specified model and input text
+        response = self.client.embeddings.create(
+            model=model,
+            input=text
+        )
+        # Return the embedding from the response
+        return response.data[0].embedding
 
     # Performing Semantic Search
     def cosine_similarity(self, v1, v2):
@@ -157,6 +164,17 @@ class RAG:
         return [text_chunks[i] for i in top_indices]
     
 
+    def contextual_chunk_headers_generate_response(self, system_prompt, user_message, model="gpt-4o"):
+        response = self.client.chat.completions.create(
+            model=model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        return response
+
     def generate_response(self, query, system_prompt, retrieved_chunks, model="gpt-4o"):
         # Combine retrieved chunks into a single context string
         context = "\n".join([f"Context {i+1}:\n{chunk}" for i, chunk in enumerate(retrieved_chunks)])
@@ -175,6 +193,27 @@ class RAG:
         # Return the content of the AI response
         return response.choices[0].message.content
     
+    def semantic_search(self, query, chunks, k=5):
+        # Create an embedding for the query
+        query_embedding = self.contextual_chunk_header_create_embeddings(query)
+
+        similarities = []  # Initialize a list to store similarity scores
+        
+        # Iterate through each chunk to calculate similarity scores
+        for chunk in chunks:
+            # Compute cosine similarity between query embedding and chunk text embedding
+            sim_text = self.cosine_similarity(np.array(query_embedding), np.array(chunk["embedding"]))
+            # Compute cosine similarity between query embedding and chunk header embedding
+            sim_header = self.cosine_similarity(np.array(query_embedding), np.array(chunk["header_embedding"]))
+            # Calculate the average similarity score
+            avg_similarity = (sim_text + sim_header) / 2
+            # Append the chunk and its average similarity score to the list
+            similarities.append((chunk, avg_similarity))
+        # Sort the chunks based on similarity scores in descending order
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        # Return the top-k most relevant chunks
+        return [x[0] for x in similarities[:k]]
+        
     def generate_response_context_enriched(self, system_prompt, user_message, model="gpt-4o"):
         response = self.client.chat.completions.create(
             model=model,
@@ -329,6 +368,62 @@ class RAG:
         # Print the evaluation response
         print(f'\ncontext enriched run response: {evaluation_response}\n')
     
+    def contextual_chunk_headers_run(self):
+        # Extract text from the PDF file
+        extracted_text = self.extract_text_from_pdf()
+        # Chunk the extracted text with headers
+        # We use a chunk size of 1000 characters and an overlap of 200 characters
+        text_chunks = self.chunk_text_with_headers(extracted_text, 1000, 200)
+        # Generate embeddings for each chunk
+        embeddings = []  # Initialize an empty list to store embeddings
+        # Iterate through each text chunk with a progress bar
+        for chunk in tqdm(text_chunks, desc="Generating embeddings"):
+            # Create an embedding for the chunk's text
+            text_embedding = self.contextual_chunk_header_create_embeddings(chunk["text"])
+            # Create an embedding for the chunk's header
+            header_embedding = self.contextual_chunk_header_create_embeddings(chunk["header"])
+            # Append the chunk's header, text, and their embeddings to the list
+            embeddings.append({"header": chunk["header"], "text": chunk["text"], "embedding": text_embedding, "header_embedding": header_embedding})
+
+        query = self.data[0]['question']
+        # Retrieve the top 2 most relevant text chunks
+        top_chunks = self.semantic_search(query, embeddings, k=2)
+
+        # Print the results
+        print("\nQuery:", query)
+        for i, chunk in enumerate(top_chunks):
+            print(f"\nHeader {i+1}: {chunk['header']}")
+            print(f"\nContent:\n{chunk['text']}\n")
+
+        # Create the user prompt based on the top chunks
+        user_prompt = "\n".join([f"Header: {chunk['header']}\nContent:\n{chunk['text']}" for chunk in top_chunks])
+        user_prompt = f"{user_prompt}\nQuestion: {query}"
+
+        # Generate AI response
+        ai_response = self.contextual_chunk_headers_generate_response(self.system_prompt, user_prompt)
+        # Define evaluation system prompt
+        evaluate_system_prompt = """You are an intelligent evaluation system. 
+        Assess the AI assistant's response based on the provided context. 
+        - Assign a score of 1 if the response is very close to the true answer. 
+        - Assign a score of 0.5 if the response is partially correct. 
+        - Assign a score of 0 if the response is incorrect.
+        Return only the score (0, 0.5, or 1)."""
+
+        # Extract the ground truth answer from validation data
+        true_answer = self.data[0]['answer']
+
+        # Construct evaluation prompt
+        evaluation_prompt = f"""
+        User Query: {query}
+        AI Response: {ai_response}
+        True Answer: {true_answer}
+        {evaluate_system_prompt}
+        """
+
+        # Generate evaluation score
+        evaluation_response = self.contextual_chunk_headers_generate_response(evaluate_system_prompt, evaluation_prompt)
+        # Print the evaluation score
+        print("\nEvaluation Score:", evaluation_response.choices[0].message.content)
 
 if __name__ == "__main__":
     # Define the path to the PDF file
@@ -339,6 +434,9 @@ if __name__ == "__main__":
          question_path=question_path
     )
 
-    evaluator.chunk_run()
+    # evaluator.chunk_run()
     print(f'\n\n ----------------------------------- NEXT -------------------------------------- \n\n')
-    evaluator.context_enriched_run()
+    # evaluator.context_enriched_run()
+    print(f'\n\n ----------------------------------- NEXT -------------------------------------- \n\n')
+    evaluator.contextual_chunk_headers_run()
+
